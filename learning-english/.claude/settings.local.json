@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(flutter pub get:*)",
+      "Bash(flutter clean:*)",
+      "mcp__ide__getDiagnostics",
+      "Bash(flutter run:*)",
+      "Bash(find:*)",
+      "Bash(./gradlew signingReport:*)",
+      "Bash(keytool:*)",
+      "Bash(gradlew.bat signingReport:*)",
+      "Bash(flutterfire configure:*)",
+      "Bash(dart pub global activate:*)",
+      "Bash(~/.pub-cache/bin/flutterfire configure --project=learning-english-7bc45)",
+      "Bash(/root/.pub-cache/bin/flutterfire configure --project=learning-english-7bc45)",
+      "Bash(dart pub global list:*)",
+      "Bash(./gradlew.bat:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}

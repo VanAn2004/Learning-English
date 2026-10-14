@@ -1,0 +1,326 @@
+import 'package:firebase_auth/firebase_auth.dart' as firebase_auth;
+import 'package:flutter/foundation.dart';
+import '../domain/entities/user_entity.dart';
+import '../domain/repositories/auth_repository.dart';
+import '../domain/repositories/user_repository.dart';
+
+class AuthService extends ChangeNotifier {
+  final AuthRepository _authRepository;
+  final UserRepository _userRepository;
+
+  AuthService({
+    required AuthRepository authRepository,
+    required UserRepository userRepository,
+  })  : _authRepository = authRepository,
+        _userRepository = userRepository;
+
+  bool _isLoading = false;
+  bool get isLoading => _isLoading;
+
+  String? _errorMessage;
+  String? get errorMessage => _errorMessage;
+
+  UserEntity? _currentUserData;
+  UserEntity? get currentUserData => _currentUserData;
+
+  firebase_auth.User? get currentUser => _authRepository.currentUser;
+
+  Stream<firebase_auth.User?> get authStateChanges =>
+      _authRepository.authStateChanges;
+
+  void _setLoading(bool value) {
+    _isLoading = value;
+    notifyListeners();
+  }
+
+  void _setError(String? message) {
+    _errorMessage = message;
+    notifyListeners();
+  }
+
+  void clearError() {
+    _errorMessage = null;
+    notifyListeners();
+  }
+
+  /// Đảm bảo document user tồn tại trong Firestore
+  Future<void> _ensureUserDocument(UserEntity user) async {
+    try {
+      await _userRepository.ensureUserDocumentExists(user.id);
+    } catch (e) {
+      debugPrint('Warning: Could not ensure user document exists: $e');
+    }
+  }
+
+  Future<UserEntity?> signUp({
+    required String email,
+    required String password,
+    required String displayName,
+  }) async {
+    try {
+      _setLoading(true);
+      _setError(null);
+
+      final user = await _authRepository.signUp(
+        email: email,
+        password: password,
+        displayName: displayName,
+      );
+
+      if (user == null) {
+        _setError('Failed to create account');
+        _setLoading(false);
+        return null;
+      }
+
+      await _ensureUserDocument(user);
+
+      try {
+        await _userRepository.saveUserData(user);
+        _currentUserData = user;
+      } catch (e) {
+        debugPrint('Warning: Could not save full user data: $e');
+      }
+
+      _setLoading(false);
+      return _currentUserData;
+    } catch (e) {
+      _setLoading(false);
+      _setError(e.toString().replaceAll('Exception: ', ''));
+      return null;
+    }
+  }
+
+  Future<UserEntity?> signIn({
+    required String email,
+    required String password,
+  }) async {
+    try {
+      _setLoading(true);
+      _setError(null);
+
+      final user = await _authRepository.signIn(
+        email: email,
+        password: password,
+      );
+
+      if (user == null) {
+        _setError('Failed to sign in');
+        _setLoading(false);
+        return null;
+      }
+
+      await _ensureUserDocument(user);
+
+      try {
+        final userData = await _userRepository.getUserData(user.id);
+        _currentUserData = userData ?? user;
+        debugPrint(
+            '✅ SignIn - Loaded user data: XP=${_currentUserData?.profile?.totalXP}, TodayXP=${_currentUserData?.profile?.todayXP}, Streak=${_currentUserData?.profile?.currentStreak}');
+      } catch (e) {
+        debugPrint('Warning: Could not load user data: $e');
+        _currentUserData = user;
+      }
+
+      _setLoading(false);
+      return _currentUserData;
+    } catch (e) {
+      _setLoading(false);
+      _setError(e.toString().replaceAll('Exception: ', ''));
+      return null;
+    }
+  }
+
+  Future<UserEntity?> signInWithGoogle() async {
+    try {
+      _setLoading(true);
+      _setError(null);
+
+      final user = await _authRepository.signInWithGoogle();
+
+      if (user == null) {
+        _setError('Google sign in canceled');
+        _setLoading(false);
+        return null;
+      }
+
+      await _ensureUserDocument(user);
+
+      try {
+        var userData = await _userRepository.getUserData(user.id);
+        if (userData == null) {
+          await _userRepository.saveUserData(user);
+          userData = user;
+        }
+        _currentUserData = userData;
+      } catch (e) {
+        debugPrint('Warning: Could not handle user data: $e');
+        _currentUserData = user;
+      }
+
+      _setLoading(false);
+      return _currentUserData;
+    } catch (e) {
+      _setLoading(false);
+      _setError(e.toString().replaceAll('Exception: ', ''));
+      return null;
+    }
+  }
+
+  Future<void> signOut() async {
+    try {
+      _setLoading(true);
+      _setError(null);
+
+      await _authRepository.signOut();
+      _currentUserData = null;
+
+      _setLoading(false);
+    } catch (e) {
+      _setLoading(false);
+      _setError('Failed to sign out: ${e.toString()}');
+    }
+  }
+
+  // ==================== RESET PASSWORD ====================
+
+  /// Reset password via email
+  Future<bool> resetPassword({required String email}) async {
+    try {
+      _setLoading(true);
+      _setError(null);
+
+      await _authRepository.resetPassword(email: email);
+
+      _setLoading(false);
+      return true;
+    } catch (e) {
+      _setLoading(false);
+      _setError(e.toString().replaceAll('Exception: ', ''));
+      return false;
+    }
+  }
+
+  // ==================== EMAIL VERIFICATION ====================
+
+  /// Send email verification
+  Future<bool> sendEmailVerification() async {
+    try {
+      _setError(null);
+      await _authRepository.sendEmailVerification();
+      return true;
+    } catch (e) {
+      _setError(e.toString().replaceAll('Exception: ', ''));
+      return false;
+    }
+  }
+
+  /// Reload user to get updated info
+  Future<void> reloadUser() async {
+    try {
+      await _authRepository.reloadUser();
+
+      // Load lại user data từ Firestore
+      final user = _authRepository.currentUser;
+      if (user != null) {
+        _currentUserData = await _userRepository.getUserData(user.uid);
+        debugPrint(
+            '🔄 Reloaded user data - XP: ${_currentUserData?.profile?.totalXP}, Today XP: ${_currentUserData?.profile?.todayXP}, Streak: ${_currentUserData?.profile?.currentStreak}');
+      }
+
+      notifyListeners();
+    } catch (e) {
+      debugPrint('Error reloading user: $e');
+    }
+  }
+
+  // ==================== UPDATE PASSWORD ====================
+
+  /// Update password (requires recent login)
+  Future<bool> updatePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) async {
+    try {
+      _setLoading(true);
+      _setError(null);
+
+      await _authRepository.updatePassword(
+        currentPassword: currentPassword,
+        newPassword: newPassword,
+      );
+
+      _setLoading(false);
+      return true;
+    } catch (e) {
+      _setLoading(false);
+      _setError(e.toString().replaceAll('Exception: ', ''));
+      return false;
+    }
+  }
+
+  // ==================== DELETE ACCOUNT ====================
+
+  /// Delete account (requires recent login)
+  Future<bool> deleteAccount({required String password}) async {
+    try {
+      _setLoading(true);
+      _setError(null);
+
+      final userId = currentUser?.uid;
+      if (userId == null) {
+        _setError('No user logged in');
+        _setLoading(false);
+        return false;
+      }
+
+      // Delete user data from Firestore first
+      try {
+        await _userRepository.deleteUserData(userId);
+      } catch (e) {
+        debugPrint('Warning: Could not delete user data from Firestore: $e');
+      }
+
+      // Delete Firebase Auth account
+      await _authRepository.deleteAccount(password: password);
+
+      _currentUserData = null;
+      _setLoading(false);
+      return true;
+    } catch (e) {
+      _setLoading(false);
+      _setError(e.toString().replaceAll('Exception: ', ''));
+      return false;
+    }
+  }
+
+  // ==================== LOAD USER DATA ====================
+
+  /// Load user data from Firestore
+  Future<void> loadUserData() async {
+    try {
+      final userId = currentUser?.uid;
+      if (userId == null) return;
+
+      final userData = await _userRepository.getUserData(userId);
+      if (userData != null) {
+        _currentUserData = userData;
+        notifyListeners();
+      }
+    } catch (e) {
+      debugPrint('Error loading user data: $e');
+    }
+  }
+
+  // ==================== WATCH USER DATA ====================
+
+  /// Stream user data changes from Firestore
+  Stream<UserEntity?> watchUserData() {
+    final userId = currentUser?.uid;
+    if (userId == null) {
+      return Stream.value(null);
+    }
+
+    return _userRepository.watchUserData(userId);
+  }
+}
